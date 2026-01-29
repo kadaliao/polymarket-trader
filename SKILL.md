@@ -82,6 +82,10 @@ List simplified market information or get details for a specific market.
   ```bash
   uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --max-pages 5 --title-like btc --limit 50
   ```
+- **Title filters default to Gamma for speed** (use `--title-source clob` to force CLOB):
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py markets --title-any "btc,bitcoin" --title-source gamma --limit 20
+  ```
 - **Reduce output fields**:
   ```bash
   uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --fields condition_id,token_id,title --compact
@@ -161,6 +165,27 @@ Cancel existing orders.
   uv run --with py-clob-client scripts/poly_wrapper.py cancel --all
   ```
 
+### 6b. Order Status (Match vs Settlement)
+Check an order and any associated trades (lightweight).
+
+```bash
+uv run --with py-clob-client scripts/poly_wrapper.py order-status --order-id <order_id>
+```
+`order-status` output includes a lightweight `summary.settlement` field.
+
+### 6c. Order Diagnose (Advanced)
+Includes optional onchain receipt checks and a watch mode.
+
+Watch until settlement completes (polls and exits when status is no longer pending):
+```bash
+uv run --with py-clob-client scripts/poly_wrapper.py order-diagnose --order-id <order_id> --watch
+```
+Include onchain receipt (requires `POLYMARKET_RPC`):
+```bash
+uv run --with py-clob-client scripts/poly_wrapper.py order-diagnose --order-id <order_id> --with-receipt
+```
+`order-diagnose` output includes a `summary.settlement` field (`pending`, `settled`, `reverted`, `failed`, `matched`, `unknown`).
+
 ## Troubleshooting
 
 - **Authentication Errors**: Ensure `POLYMARKET_KEY` is set correctly in the environment.
@@ -206,6 +231,10 @@ export POLYMARKET_GAMMA_HOST="https://gamma-api.polymarket.com"
 - **Auto pagination + AI-friendly output**:
   ```bash
   uv run --with py-clob-client scripts/poly_wrapper.py gamma-events --q "btc" --max-pages 5 --max-results 200 --ai
+  ```
+- **Open/active only + ending soon**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-markets --q "btc" --open-only --active-only --end-within-hours 24 --ai
   ```
 - **Try multiple query param names**:
   ```bash

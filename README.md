@@ -1,6 +1,20 @@
 # Polymarket Trader (AI Skill)
 
-A lightweight AI skill and CLI wrapper for Polymarket CLOB: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client` and designed for repeatable automation via `uv run`. Works with any AI agent that can read `SKILL.md` (Codex-compatible) or use the CLI directly.
+A lightweight AI skill and CLI wrapper for Polymarket CLOB: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client`. Works with any AI agent that can read `SKILL.md` (Codex-compatible) or use the CLI directly.
+
+## Install
+
+Recommended (uv):
+```
+uv tool install polymarket-trader
+```
+
+Also supported:
+```
+pipx install polymarket-trader
+# or
+pip install polymarket-trader
+```
 
 ## Features
 
@@ -27,8 +41,8 @@ POLYMARKET_RPC=https://polygon-rpc.com
 Verify:
 
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py whoami
-uv run --with py-clob-client scripts/poly_wrapper.py balance --asset-type collateral
+polymarket-trader whoami
+polymarket-trader balance --asset-type collateral
 ```
 
 If allowances are all zero, open Polymarket, click Buy on any market, and approve USDC (Enable trading).
@@ -37,28 +51,35 @@ If allowances are all zero, open Polymarket, click Buy on any market, and approv
 
 List markets:
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --accepting-only --limit 50
+polymarket-trader markets --sampling --accepting-only --limit 50
 ```
 
 Include titles:
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --with-title --limit 20
+polymarket-trader markets --sampling --with-title --limit 20
 ```
 
 Orderbook / quote:
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py orderbook <token_id>
-uv run --with py-clob-client scripts/poly_wrapper.py quote <token_id>
+polymarket-trader orderbook <token_id>
+polymarket-trader quote <token_id>
 ```
 
 Buy with USD cap (best ask by default):
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py buy-max <token_id> 5
+polymarket-trader buy-max <token_id> 5
 ```
 
 Diagnostics:
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py diagnose --onchain --fix
+polymarket-trader diagnose --onchain --fix
+```
+
+## Using from source (no install)
+
+```
+uv run --with py-clob-client scripts/poly_wrapper.py whoami
+uv run --with py-clob-client scripts/poly_wrapper.py balance --asset-type collateral
 ```
 
 For the full command list, see `SKILL.md`.
@@ -70,10 +91,9 @@ For the full command list, see `SKILL.md`.
 
 ## Publishing
 
-The packaged skill file can be built with:
+Build a wheel/sdist:
 ```
-uv run --with pyyaml python3 /Users/liaoxingyi/.codex/skills/.system/skill-creator/scripts/package_skill.py \
-  /Volumes/Data-External/workspace/polymarket-trader ./dist
+uv run --with build -m build
 ```
 
 ## License

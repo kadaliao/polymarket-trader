@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "polymarket-trader"
+version = "0.1.0"
+description = "Polymarket CLOB CLI wrapper and AI skill"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = ["py-clob-client"]
+
+[project.scripts]
+polymarket-trader = "polymarket_trader.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/polymarket_trader"]

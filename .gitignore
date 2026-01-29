@@ -1,0 +1,6 @@
+# build artifacts
+dist/
+
+# local secrets
+.polymarket.env
+.env

@@ -16,3 +16,12 @@ polymarket-trader = "polymarket_trader.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/polymarket_trader"]
+
+[tool.hatch.build]
+exclude = [
+  "AGENTS.md",
+  ".DS_Store",
+  ".venv",
+  "dist",
+  "scripts/__pycache__",
+]

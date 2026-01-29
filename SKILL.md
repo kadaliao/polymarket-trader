@@ -78,6 +78,18 @@ List simplified market information or get details for a specific market.
   ```bash
   uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --with-title --limit 20
   ```
+- **Paginate + filter by title (local filter)**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --max-pages 5 --title-like btc --limit 50
+  ```
+- **Reduce output fields**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --fields condition_id,token_id,title --compact
+  ```
+- **AI-friendly output**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py markets --sampling --ai
+  ```
 - **Get specific market details**:
   ```bash
   uv run --with py-clob-client scripts/poly_wrapper.py markets --id <condition_id_or_token_id>
@@ -163,6 +175,42 @@ Cancel existing orders.
   uv run --with py-clob-client scripts/poly_wrapper.py refresh-balance --asset-type collateral
   ```
   If your Polymarket account uses a proxy wallet (site shows a different trading address), set `POLYMARKET_SIG_TYPE` and `POLYMARKET_FUNDER` to match the proxy wallet.
+
+## Gamma API (Discovery/Search)
+
+These endpoints are better for finding markets by text than CLOB simplified markets. You can also override the host:
+```bash
+export POLYMARKET_GAMMA_HOST="https://gamma-api.polymarket.com"
+```
+
+- **Generic Gamma request**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma /events --param limit=50 --param offset=0 --q "bitcoin"
+  ```
+- **Events (convenience)**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-events --q "btc" --limit 50
+  ```
+- **Markets (convenience)**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-markets --q "eth" --limit 50
+  ```
+- **Public search (convenience)**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-search --q "fomc" --limit 50
+  ```
+- **Local filter + field trimming**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-events --q "election" --title-like "2028" --fields id,title --compact
+  ```
+- **Auto pagination + AI-friendly output**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-events --q "btc" --max-pages 5 --max-results 200 --ai
+  ```
+- **Try multiple query param names**:
+  ```bash
+  uv run --with py-clob-client scripts/poly_wrapper.py gamma-search --q "fomc" --q-try "search,query,q" --limit 50
+  ```
 
 ## Troubleshooting Checklist
 

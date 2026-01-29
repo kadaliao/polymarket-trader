@@ -1,6 +1,6 @@
-# Polymarket Trader (Codex Skill)
+# Polymarket Trader (AI Skill)
 
-A lightweight Codex skill and CLI wrapper for Polymarket CLOB: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client` and designed for repeatable automation via `uv run`.
+A lightweight AI skill and CLI wrapper for Polymarket CLOB: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client` and designed for repeatable automation via `uv run`. Works with any AI agent that can read `SKILL.md` (Codex-compatible) or use the CLI directly.
 
 ## Features
 

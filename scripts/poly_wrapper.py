@@ -3,6 +3,8 @@ import os
 import sys
 import json
 import argparse
+import re
+import urllib.parse
 import urllib.request
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
@@ -65,7 +67,6 @@ def get_client(require_auth):
     if not key:
         print("Error: POLYMARKET_KEY environment variable not set.", file=sys.stderr)
         sys.exit(1)
-
     # Simple initialization for EOA (External Owned Account)
     # For more complex setups (Agent wallets), this might need adjustment.
     try:
@@ -92,6 +93,113 @@ def get_client(require_auth):
     except Exception as e:
         print(f"Error initializing client: {e}", file=sys.stderr)
         sys.exit(1)
+
+def _http_get_json(url, timeout=15):
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "polymarket-trader/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("non-JSON response")
+
+def _parse_kv_params(kv_list):
+    params = {}
+    if not kv_list:
+        return params
+    for raw in kv_list:
+        if "=" not in raw:
+            raise ValueError(f"Invalid param '{raw}', expected key=value")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key in params:
+            if isinstance(params[key], list):
+                params[key].append(value)
+            else:
+                params[key] = [params[key], value]
+        else:
+            params[key] = value
+    return params
+
+def _select_fields(item, fields):
+    if not fields:
+        return item
+    return {k: item.get(k) for k in fields}
+
+def _title_from_item(item):
+    return (
+        item.get("title")
+        or item.get("question")
+        or item.get("name")
+    )
+
+def _split_terms(raw):
+    if not raw:
+        return []
+    if "," in raw:
+        parts = raw.split(",")
+    else:
+        parts = raw.split()
+    return [p.strip().lower() for p in parts if p.strip()]
+
+def _expand_terms(terms):
+    if not terms:
+        return terms
+    aliases = {
+        "btc": ["btc", "bitcoin"],
+        "eth": ["eth", "ethereum"],
+        "sol": ["sol", "solana"],
+        "xrp": ["xrp", "ripple"],
+        "ada": ["ada", "cardano"],
+        "doge": ["doge", "dogecoin"],
+        "ltc": ["ltc", "litecoin"],
+        "dot": ["dot", "polkadot"],
+        "link": ["link", "chainlink"],
+        "bnb": ["bnb", "binance"],
+    }
+    expanded = []
+    for term in terms:
+        expanded.extend(aliases.get(term, [term]))
+    return list(dict.fromkeys(expanded))
+
+def _match_title(title, args):
+    if not any([args.title_like, args.title_any, args.title_all, args.title_regex]):
+        return True
+    if not title:
+        return False
+    t = title.lower()
+    if args.title_like and args.title_like.lower() not in t:
+        return False
+    if args.title_any:
+        terms = _expand_terms(_split_terms(args.title_any))
+        if terms and not any(term in t for term in terms):
+            return False
+    if args.title_all:
+        terms = _expand_terms(_split_terms(args.title_all))
+        if terms and not all(term in t for term in terms):
+            return False
+    if args.title_regex:
+        try:
+            if not re.search(args.title_regex, title, flags=re.IGNORECASE):
+                return False
+        except re.error:
+            raise ValueError("Invalid --title-regex pattern")
+    return True
+
+def _apply_ai_defaults(args, fields_map):
+    if not getattr(args, "ai", False):
+        return
+    args.compact = True
+    if not args.fields:
+        fields = fields_map.get(getattr(args, "gamma_path", None)) or fields_map.get("default")
+        if fields:
+            args.fields = fields
 
 def _best_order(orders, best_fn):
     if not orders:
@@ -166,40 +274,177 @@ def cmd_markets(args):
             # The library doc says get_simplified_markets()
             if args.with_title and args.limit is None:
                 args.limit = 20
-            if args.sampling:
-                resp = client.get_sampling_simplified_markets(
-                    next_cursor=args.cursor or "MA=="
-                )
-            else:
-                if args.cursor:
-                    resp = client.get_simplified_markets(next_cursor=args.cursor)
-                else:
-                    resp = client.get_simplified_markets()
-            if args.accepting_only:
-                resp["data"] = [
-                    m
-                    for m in resp.get("data", [])
-                    if m.get("accepting_orders")
-                ]
-            if args.limit:
-                resp["data"] = resp.get("data", [])[: args.limit]
-            if args.with_title:
-                for m in resp.get("data", []):
-                    condition_id = m.get("condition_id")
-                    if not condition_id:
+            if args.title_like or args.title_any or args.title_all or args.title_regex:
+                args.with_title = True
+            _apply_ai_defaults(
+                args,
+                {
+                    "default": "condition_id,token_id,token_ids,title,accepting_orders",
+                },
+            )
+            fields = None
+            if args.fields:
+                fields = [f.strip() for f in args.fields.split(",") if f.strip()]
+                if "title" in fields:
+                    args.with_title = True
+            max_pages = args.max_pages or 1
+            max_results = args.limit
+            cursor = args.cursor
+            all_items = []
+            next_cursor = cursor
+
+            def _get_page(next_cur):
+                if args.sampling:
+                    return client.get_sampling_simplified_markets(
+                        next_cursor=next_cur or "MA=="
+                    )
+                if next_cur:
+                    return client.get_simplified_markets(next_cursor=next_cur)
+                return client.get_simplified_markets()
+
+            pages = 0
+            while True:
+                resp = _get_page(next_cursor)
+                items = resp.get("data", [])
+                for m in items:
+                    if args.accepting_only and not m.get("accepting_orders"):
                         continue
-                    try:
-                        detail = client.get_market(condition_id)
-                        m["title"] = (
-                            detail.get("question")
-                            or detail.get("name")
-                            or detail.get("title")
-                        )
-                    except Exception:
-                        m["title"] = None
-            print(json.dumps(resp, indent=2))
+                    title_val = None
+                    if args.with_title or args.title_like:
+                        condition_id = m.get("condition_id")
+                        if condition_id:
+                            try:
+                                detail = client.get_market(condition_id)
+                                title_val = _title_from_item(detail)
+                            except Exception:
+                                title_val = None
+                        m["title"] = title_val
+                    if not _match_title(title_val, args):
+                        continue
+                    all_items.append(m)
+                    if max_results and len(all_items) >= max_results:
+                        break
+                pages += 1
+                if max_results and len(all_items) >= max_results:
+                    break
+                next_cursor = resp.get("next_cursor")
+                if not next_cursor or pages >= max_pages:
+                    break
+            if fields:
+                all_items = [_select_fields(m, fields) for m in all_items]
+            if args.compact:
+                print(json.dumps(all_items, indent=2))
+            else:
+                out = {
+                    "data": all_items,
+                    "count": len(all_items),
+                }
+                if next_cursor:
+                    out["next_cursor"] = next_cursor
+                print(json.dumps(out, indent=2))
     except Exception as e:
         print(f"Error fetching markets: {e}", file=sys.stderr)
+
+def cmd_gamma(args):
+    try:
+        base = os.getenv("POLYMARKET_GAMMA_HOST", "https://gamma-api.polymarket.com")
+        path = getattr(args, "gamma_path", None) or args.path
+        if not path.startswith("/"):
+            path = "/" + path
+        _apply_ai_defaults(
+            args,
+            {
+                "/events": "id,title,slug,active,closed,markets",
+                "/markets": "id,condition_id,slug,title,question,active,closed",
+                "/public-search": "id,title,slug,active,closed",
+                "default": "id,title,slug,question,name,active,closed,condition_id",
+            },
+        )
+
+        params = _parse_kv_params(args.param)
+        if args.limit is not None and "limit" not in params:
+            params["limit"] = str(args.limit)
+        if args.offset is not None and "offset" not in params:
+            params["offset"] = str(args.offset)
+        if args.order and "order" not in params:
+            params["order"] = args.order
+
+        def _fetch_pages(extra_params):
+            merged = dict(params)
+            merged.update(extra_params or {})
+            limit = int(merged.get("limit") or args.limit or 100)
+            offset = int(merged.get("offset") or args.offset or 0)
+            max_pages = args.max_pages or 1
+            max_results = args.max_results
+            all_items = []
+            first_resp = None
+            for _ in range(max_pages):
+                page_params = dict(merged)
+                if limit:
+                    page_params["limit"] = str(limit)
+                if offset is not None:
+                    page_params["offset"] = str(offset)
+                url = base.rstrip("/") + path
+                if page_params:
+                    url = url + "?" + urllib.parse.urlencode(page_params, doseq=True)
+                resp = _http_get_json(url, timeout=args.timeout)
+                if first_resp is None:
+                    first_resp = resp
+                if isinstance(resp, dict) and isinstance(resp.get("data"), list):
+                    items = resp.get("data")
+                elif isinstance(resp, list):
+                    items = resp
+                else:
+                    return resp, None
+                all_items.extend(items)
+                if max_results and len(all_items) >= max_results:
+                    all_items = all_items[:max_results]
+                    break
+                if not limit or len(items) < limit:
+                    break
+                offset += limit
+            return first_resp, all_items
+
+        resp = None
+        items = None
+        if args.q:
+            if args.q_param:
+                resp, items = _fetch_pages({args.q_param: args.q})
+            else:
+                tried = _split_terms(args.q_try or "search,query,q,text")
+                for name in tried:
+                    resp, items = _fetch_pages({name: args.q})
+                    if items is not None and len(items) > 0:
+                        break
+        if resp is None:
+            resp, items = _fetch_pages({})
+
+        fields = None
+        if args.fields:
+            fields = [f.strip() for f in args.fields.split(",") if f.strip()]
+        if items is not None:
+            filtered = []
+            for m in items:
+                if isinstance(m, dict):
+                    title_val = _title_from_item(m)
+                    if not _match_title(title_val, args):
+                        continue
+                filtered.append(m)
+            items = filtered
+            if fields:
+                items = [_select_fields(m, fields) if isinstance(m, dict) else m for m in items]
+            if args.compact:
+                print(json.dumps(items, indent=2))
+            else:
+                if isinstance(resp, dict):
+                    resp["data"] = items
+                    print(json.dumps(resp, indent=2))
+                else:
+                    print(json.dumps(items, indent=2))
+        else:
+            print(json.dumps(resp, indent=2))
+    except Exception as e:
+        print(f"Error fetching gamma data: {e}", file=sys.stderr)
 
 def cmd_orderbook(args):
     client = get_client(require_auth=False)
@@ -522,10 +767,127 @@ def main():
         help="Limit number of returned markets",
     )
     p_markets.add_argument(
+        "--max-pages",
+        type=int,
+        help="Max pages to scan (default 1)",
+    )
+    p_markets.add_argument(
         "--with-title",
         action="store_true",
         help="Fetch market details to include title (uses condition_id)",
     )
+    p_markets.add_argument(
+        "--title-like",
+        help="Filter markets by title substring (case-insensitive)",
+    )
+    p_markets.add_argument(
+        "--title-any",
+        help="Filter markets by any term in title (comma or space separated)",
+    )
+    p_markets.add_argument(
+        "--title-all",
+        help="Filter markets by all terms in title (comma or space separated)",
+    )
+    p_markets.add_argument(
+        "--title-regex",
+        help="Filter markets by title regex (case-insensitive)",
+    )
+    p_markets.add_argument(
+        "--fields",
+        help="Comma-separated fields to keep in output items",
+    )
+    p_markets.add_argument(
+        "--compact",
+        action="store_true",
+        help="Output a list of items only (no wrapper object)",
+    )
+    p_markets.add_argument(
+        "--ai",
+        action="store_true",
+        help="AI-friendly output (compact + default fields)",
+    )
+
+    # Gamma (discovery/search)
+    p_gamma = subparsers.add_parser("gamma")
+    p_gamma.add_argument("path", help="Gamma API path, e.g. /events or /markets")
+    p_gamma.add_argument("--param", action="append", help="Query param key=value (repeatable)")
+    p_gamma.add_argument("--limit", type=int, help="Limit number of returned items")
+    p_gamma.add_argument("--offset", type=int, help="Offset for pagination")
+    p_gamma.add_argument("--max-pages", type=int, help="Auto paginate up to N pages")
+    p_gamma.add_argument("--max-results", type=int, help="Cap total items returned")
+    p_gamma.add_argument("--order", help="Order parameter (if supported)")
+    p_gamma.add_argument("--q", help="Search string (mapped to --q-param)")
+    p_gamma.add_argument("--q-param", help="Query parameter name for --q")
+    p_gamma.add_argument("--q-try", help="Comma/space list of query param names to try")
+    p_gamma.add_argument("--fields", help="Comma-separated fields to keep in output items")
+    p_gamma.add_argument("--compact", action="store_true", help="Output a list of items only")
+    p_gamma.add_argument("--title-like", help="Filter by title/question/name substring")
+    p_gamma.add_argument("--title-any", help="Filter by any term in title (comma or space separated)")
+    p_gamma.add_argument("--title-all", help="Filter by all terms in title (comma or space separated)")
+    p_gamma.add_argument("--title-regex", help="Filter by title regex (case-insensitive)")
+    p_gamma.add_argument("--timeout", type=int, default=15, help="HTTP timeout seconds")
+    p_gamma.add_argument("--ai", action="store_true", help="AI-friendly output (compact + default fields)")
+    p_gamma.set_defaults(func=cmd_gamma)
+
+    p_gamma_events = subparsers.add_parser("gamma-events")
+    p_gamma_events.add_argument("--param", action="append", help="Query param key=value (repeatable)")
+    p_gamma_events.add_argument("--limit", type=int, help="Limit number of returned items")
+    p_gamma_events.add_argument("--offset", type=int, help="Offset for pagination")
+    p_gamma_events.add_argument("--max-pages", type=int, help="Auto paginate up to N pages")
+    p_gamma_events.add_argument("--max-results", type=int, help="Cap total items returned")
+    p_gamma_events.add_argument("--order", help="Order parameter (if supported)")
+    p_gamma_events.add_argument("--q", help="Search string (mapped to --q-param)")
+    p_gamma_events.add_argument("--q-param", help="Query parameter name for --q")
+    p_gamma_events.add_argument("--q-try", help="Comma/space list of query param names to try")
+    p_gamma_events.add_argument("--fields", help="Comma-separated fields to keep in output items")
+    p_gamma_events.add_argument("--compact", action="store_true", help="Output a list of items only")
+    p_gamma_events.add_argument("--title-like", help="Filter by title/question/name substring")
+    p_gamma_events.add_argument("--title-any", help="Filter by any term in title (comma or space separated)")
+    p_gamma_events.add_argument("--title-all", help="Filter by all terms in title (comma or space separated)")
+    p_gamma_events.add_argument("--title-regex", help="Filter by title regex (case-insensitive)")
+    p_gamma_events.add_argument("--timeout", type=int, default=15, help="HTTP timeout seconds")
+    p_gamma_events.add_argument("--ai", action="store_true", help="AI-friendly output (compact + default fields)")
+    p_gamma_events.set_defaults(func=cmd_gamma, gamma_path="/events")
+
+    p_gamma_markets = subparsers.add_parser("gamma-markets")
+    p_gamma_markets.add_argument("--param", action="append", help="Query param key=value (repeatable)")
+    p_gamma_markets.add_argument("--limit", type=int, help="Limit number of returned items")
+    p_gamma_markets.add_argument("--offset", type=int, help="Offset for pagination")
+    p_gamma_markets.add_argument("--max-pages", type=int, help="Auto paginate up to N pages")
+    p_gamma_markets.add_argument("--max-results", type=int, help="Cap total items returned")
+    p_gamma_markets.add_argument("--order", help="Order parameter (if supported)")
+    p_gamma_markets.add_argument("--q", help="Search string (mapped to --q-param)")
+    p_gamma_markets.add_argument("--q-param", help="Query parameter name for --q")
+    p_gamma_markets.add_argument("--q-try", help="Comma/space list of query param names to try")
+    p_gamma_markets.add_argument("--fields", help="Comma-separated fields to keep in output items")
+    p_gamma_markets.add_argument("--compact", action="store_true", help="Output a list of items only")
+    p_gamma_markets.add_argument("--title-like", help="Filter by title/question/name substring")
+    p_gamma_markets.add_argument("--title-any", help="Filter by any term in title (comma or space separated)")
+    p_gamma_markets.add_argument("--title-all", help="Filter by all terms in title (comma or space separated)")
+    p_gamma_markets.add_argument("--title-regex", help="Filter by title regex (case-insensitive)")
+    p_gamma_markets.add_argument("--timeout", type=int, default=15, help="HTTP timeout seconds")
+    p_gamma_markets.add_argument("--ai", action="store_true", help="AI-friendly output (compact + default fields)")
+    p_gamma_markets.set_defaults(func=cmd_gamma, gamma_path="/markets")
+
+    p_gamma_search = subparsers.add_parser("gamma-search")
+    p_gamma_search.add_argument("--param", action="append", help="Query param key=value (repeatable)")
+    p_gamma_search.add_argument("--limit", type=int, help="Limit number of returned items")
+    p_gamma_search.add_argument("--offset", type=int, help="Offset for pagination")
+    p_gamma_search.add_argument("--max-pages", type=int, help="Auto paginate up to N pages")
+    p_gamma_search.add_argument("--max-results", type=int, help="Cap total items returned")
+    p_gamma_search.add_argument("--order", help="Order parameter (if supported)")
+    p_gamma_search.add_argument("--q", help="Search string (mapped to --q-param)")
+    p_gamma_search.add_argument("--q-param", help="Query parameter name for --q")
+    p_gamma_search.add_argument("--q-try", help="Comma/space list of query param names to try")
+    p_gamma_search.add_argument("--fields", help="Comma-separated fields to keep in output items")
+    p_gamma_search.add_argument("--compact", action="store_true", help="Output a list of items only")
+    p_gamma_search.add_argument("--title-like", help="Filter by title/question/name substring")
+    p_gamma_search.add_argument("--title-any", help="Filter by any term in title (comma or space separated)")
+    p_gamma_search.add_argument("--title-all", help="Filter by all terms in title (comma or space separated)")
+    p_gamma_search.add_argument("--title-regex", help="Filter by title regex (case-insensitive)")
+    p_gamma_search.add_argument("--timeout", type=int, default=15, help="HTTP timeout seconds")
+    p_gamma_search.add_argument("--ai", action="store_true", help="AI-friendly output (compact + default fields)")
+    p_gamma_search.set_defaults(func=cmd_gamma, gamma_path="/public-search")
 
     # Orderbook
     p_ob = subparsers.add_parser("orderbook")
@@ -591,6 +953,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if hasattr(args, "func"):
+        args.func(args)
+        return
 
     if args.command == "markets":
         cmd_markets(args)

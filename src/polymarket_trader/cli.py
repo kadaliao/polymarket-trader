@@ -312,7 +312,15 @@ def cmd_markets(args):
             # The library doc says get_simplified_markets()
             if args.with_title and args.limit is None:
                 args.limit = 20
-            title_filters = any([args.title_like, args.title_any, args.title_all, args.title_regex])
+            title_filters = any(
+                [
+                    args.title_like,
+                    args.title_any,
+                    args.title_all,
+                    args.title_regex,
+                    args.title_query,
+                ]
+            )
             if title_filters:
                 if args.title_source is None:
                     args.title_source = "gamma"
@@ -331,6 +339,7 @@ def cmd_markets(args):
                     args.with_title = True
             all_items = []
             max_results = args.limit
+            next_cursor = None
             if args.title_source == "gamma" and title_filters:
                 query = args.title_query
                 if not query:
@@ -597,7 +606,6 @@ def cmd_buy(args):
     try:
         price = float(args.price)
         size = float(args.size)
-        notional = price * size
 
         try:
             bal = _get_balance_allowance(client)
@@ -933,21 +941,27 @@ def cmd_buy_max(args):
         print(f"Error placing buy-max order: {e}", file=sys.stderr)
 
 
+def _balance_params_from_args(args):
+    params = BalanceAllowanceParams()
+    if args.asset_type:
+        asset_type = args.asset_type.lower()
+        if asset_type == "collateral":
+            params.asset_type = AssetType.COLLATERAL
+        elif asset_type == "conditional":
+            params.asset_type = AssetType.CONDITIONAL
+        else:
+            raise ValueError("asset_type must be collateral or conditional")
+    if args.token_id:
+        params.token_id = args.token_id
+    if args.signature_type is not None:
+        params.signature_type = args.signature_type
+    return params
+
+
 def cmd_balance(args):
     client = get_client_or_exit(require_auth=True)
     try:
-        params = BalanceAllowanceParams()
-        if args.asset_type:
-            if args.asset_type.lower() == "collateral":
-                params.asset_type = AssetType.COLLATERAL
-            elif args.asset_type.lower() == "conditional":
-                params.asset_type = AssetType.CONDITIONAL
-            else:
-                raise ValueError("asset_type must be collateral or conditional")
-        if args.token_id:
-            params.token_id = args.token_id
-        if args.signature_type is not None:
-            params.signature_type = args.signature_type
+        params = _balance_params_from_args(args)
         resp = client.get_balance_allowance(params)
         print(json.dumps(resp, indent=2))
     except Exception as e:
@@ -957,18 +971,7 @@ def cmd_balance(args):
 def cmd_refresh_balance(args):
     client = get_client_or_exit(require_auth=True)
     try:
-        params = BalanceAllowanceParams()
-        if args.asset_type:
-            if args.asset_type.lower() == "collateral":
-                params.asset_type = AssetType.COLLATERAL
-            elif args.asset_type.lower() == "conditional":
-                params.asset_type = AssetType.CONDITIONAL
-            else:
-                raise ValueError("asset_type must be collateral or conditional")
-        if args.token_id:
-            params.token_id = args.token_id
-        if args.signature_type is not None:
-            params.signature_type = args.signature_type
+        params = _balance_params_from_args(args)
         resp = client.update_balance_allowance(params)
         print(json.dumps(resp, indent=2))
     except Exception as e:

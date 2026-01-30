@@ -9,7 +9,6 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
-from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
     AssetType,
     BalanceAllowanceParams,
@@ -19,89 +18,13 @@ from py_clob_client.clob_types import (
 )
 from py_clob_client.order_builder.constants import BUY, SELL
 
-def _load_env_file():
-    path = os.getenv("POLYMARKET_ENV_FILE")
-    if not path:
-        path = os.path.expanduser("~/.polymarket.env")
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export ") :].strip()
-                if "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip("\"'").strip()
-                if key and value:
-                    # Allow file to override existing env values for automation
-                    os.environ[key] = value
-    except Exception:
-        # Silent failure to avoid leaking secrets in error output
-        pass
-
-
-def _env_int(name):
-    val = os.getenv(name)
-    if val is None or val == "":
-        return None
-    try:
-        return int(val)
-    except ValueError:
-        raise ValueError(f"{name} must be an integer")
-
-
-def get_client(require_auth):
-    _load_env_file()
-    host = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
-    chain_id = _env_int("POLYMARKET_CHAIN_ID") or 137  # Polygon
-    signature_type = _env_int("POLYMARKET_SIG_TYPE")
-    funder = os.getenv("POLYMARKET_FUNDER")
-    expected_signer = os.getenv("POLYMARKET_SIGNER")
-
-    if not require_auth:
-        return ClobClient(host)
-
-    key = os.getenv("POLYMARKET_KEY")
-    if not key:
-        print("Error: POLYMARKET_KEY environment variable not set.", file=sys.stderr)
-        sys.exit(1)
-    # Simple initialization for EOA (External Owned Account)
-    # For more complex setups (Agent wallets), this might need adjustment.
-    try:
-        client = ClobClient(
-            host,
-            key=key,
-            chain_id=chain_id,
-            signature_type=signature_type,
-            funder=funder,
-        )
-        client.set_api_creds(client.create_or_derive_api_creds())
-        if expected_signer:
-            if client.get_address().lower() != expected_signer.lower():
-                print(
-                    "Error: POLYMARKET_SIGNER does not match POLYMARKET_KEY-derived address.",
-                    file=sys.stderr,
-                )
-                print(
-                    f"Expected: {expected_signer}  Got: {client.get_address()}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-        return client
-    except Exception as e:
-        print(f"Error initializing client: {e}", file=sys.stderr)
-        sys.exit(1)
+from . import __version__
+from .client import get_client_or_exit
 
 def _http_get_json(url, timeout=15):
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "polymarket-trader/1.0"},
+        headers={"User-Agent": f"polymarket-trader/{__version__}"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode()
@@ -343,7 +266,7 @@ def _rpc_tx_receipt(rpc_url, tx_hash):
 
 
 def cmd_markets(args):
-    client = get_client(require_auth=False)
+    client = get_client_or_exit(require_auth=False)
     try:
         def _gamma_public_search(query):
             base = os.getenv("POLYMARKET_GAMMA_HOST", "https://gamma-api.polymarket.com")
@@ -658,7 +581,7 @@ def cmd_gamma(args):
         print(f"Error fetching gamma data: {e}", file=sys.stderr)
 
 def cmd_orderbook(args):
-    client = get_client(require_auth=False)
+    client = get_client_or_exit(require_auth=False)
     try:
         book = client.get_order_book(args.token_id)
         payload = _to_json_payload(book)
@@ -670,7 +593,7 @@ def cmd_orderbook(args):
         print(f"Error fetching orderbook: {e}", file=sys.stderr)
 
 def cmd_buy(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         price = float(args.price)
         size = float(args.size)
@@ -703,7 +626,7 @@ def cmd_buy(args):
         print(f"Error placing buy order: {e}", file=sys.stderr)
 
 def cmd_sell(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         price = float(args.price)
         size = float(args.size)
@@ -721,7 +644,7 @@ def cmd_sell(args):
         print(f"Error placing sell order: {e}", file=sys.stderr)
 
 def cmd_cancel(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         if args.all and args.order_id:
             print("Error: use either --all or --order-id, not both.", file=sys.stderr)
@@ -816,7 +739,7 @@ def _summarize_settlement(trades, receipts):
 
 
 def cmd_order_status(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         result = _fetch_order_status(
             client,
@@ -841,7 +764,7 @@ def cmd_order_status(args):
 
 
 def cmd_order_diagnose(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         include_receipts = bool(args.with_receipt)
         if not args.watch:
@@ -920,7 +843,7 @@ def cmd_order_diagnose(args):
 
 
 def cmd_quote(args):
-    client = get_client(require_auth=False)
+    client = get_client_or_exit(require_auth=False)
     try:
         book = client.get_order_book(args.token_id)
         best_bid, best_ask = _best_bid_ask(book)
@@ -948,7 +871,7 @@ def cmd_quote(args):
 
 
 def cmd_buy_max(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         book = client.get_order_book(args.token_id)
         best_bid, best_ask = _best_bid_ask(book)
@@ -1011,7 +934,7 @@ def cmd_buy_max(args):
 
 
 def cmd_balance(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         params = BalanceAllowanceParams()
         if args.asset_type:
@@ -1032,7 +955,7 @@ def cmd_balance(args):
 
 
 def cmd_refresh_balance(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         params = BalanceAllowanceParams()
         if args.asset_type:
@@ -1053,7 +976,7 @@ def cmd_refresh_balance(args):
 
 
 def cmd_whoami(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         payload = {
             "address": client.get_address(),
@@ -1070,7 +993,7 @@ def cmd_whoami(args):
 
 
 def cmd_diagnose(args):
-    client = get_client(require_auth=True)
+    client = get_client_or_exit(require_auth=True)
     try:
         who = {
             "address": client.get_address(),
@@ -1136,7 +1059,12 @@ def cmd_diagnose(args):
         print(f"Error running diagnose: {e}", file=sys.stderr)
 
 def main():
-    parser = argparse.ArgumentParser(description="Polymarket CLI Wrapper")
+    parser = argparse.ArgumentParser(description="Polymarket Trader CLI")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     # Markets

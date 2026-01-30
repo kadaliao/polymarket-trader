@@ -1,6 +1,8 @@
-# Polymarket Trader (AI Skill)
+# Polymarket Trader CLI
 
-A lightweight AI skill and CLI wrapper for Polymarket CLOB: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client`. Works with any AI agent that can read `SKILL.md` (Codex-compatible) or use the CLI directly.
+A command-line tool for Polymarket CLOB trading: browse markets, inspect orderbooks, place/cancel orders, and run diagnostics. Built on `py-clob-client`.
+
+Note: this repo contains the CLI/tooling only. Any AI skill definitions live in a separate repo.
 
 ## Install
 
@@ -16,17 +18,9 @@ pipx install polymarket-trader
 pip install polymarket-trader
 ```
 
-## Features
-
-- Read-only market data: list markets, orderbooks, quotes
-- Trading: buy/sell, cancel orders, buy with a USD cap
-- Proxy wallet support (Safe): signer vs funder handling
-- Diagnostics: balance/allowance + optional onchain allowance check
-- Environment file auto-load: `~/.polymarket.env`
-
 ## Quick Start (Polymarket UI / Proxy Wallet)
 
-Most Polymarket accounts use a proxy wallet (Safe) that holds funds, while your MetaMask EOA signs orders. The UI shows the proxy address.
+Most Polymarket accounts use a proxy (Safe) wallet that holds funds, while your MetaMask EOA signs orders. The UI shows the proxy address.
 
 Create `~/.polymarket.env`:
 
@@ -75,27 +69,48 @@ Diagnostics:
 polymarket-trader diagnose --onchain --fix
 ```
 
+Full command list:
+```
+polymarket-trader --help
+```
+
+## Environment variables
+
+- `POLYMARKET_KEY`: signer private key (required for trading)
+- `POLYMARKET_SIG_TYPE`: 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
+- `POLYMARKET_FUNDER`: proxy wallet address that holds collateral
+- `POLYMARKET_SIGNER`: expected EOA address for safety checks
+- `POLYMARKET_ENV_FILE`: override env file path (default `~/.polymarket.env`)
+- `POLYMARKET_HOST`: CLOB API host (default `https://clob.polymarket.com`)
+- `POLYMARKET_CHAIN_ID`: chain id (default `137` for Polygon)
+- `POLYMARKET_RPC`: RPC URL (used for onchain allowance/receipt checks)
+
 ## Using from source (no install)
 
 ```
-uv run --with py-clob-client scripts/poly_wrapper.py whoami
-uv run --with py-clob-client scripts/poly_wrapper.py balance --asset-type collateral
+uv run --with py-clob-client -m polymarket_trader whoami
+uv run --with py-clob-client -m polymarket_trader balance --asset-type collateral
 ```
 
-For the full command list, see `SKILL.md`.
+## Publishing
+
+Local build + publish:
+```
+uv build
+uv publish
+```
+
+CI (Trusted Publishing):
+1) Create a GitHub environment named `pypi` (matches the workflow).
+2) Configure a PyPI Trusted Publisher pointing to `.github/workflows/publish.yml` and the `pypi` environment.
+3) Create and push a version tag like `v0.2.0`.
+4) GitHub Actions will build and publish the package automatically.
 
 ## Safety
 
 - Never paste private keys into chat or commit them to git.
 - `~/.polymarket.env` is loaded automatically and should be kept local.
 
-## Publishing
-
-Build a wheel/sdist:
-```
-uv run --with build -m build
-```
-
 ## License
 
-MIT (add a LICENSE file if you want this explicit).
+MIT (see LICENSE).

@@ -1,5 +1,19 @@
 # build artifacts
 dist/
+build/
+*.egg-info/
+*.whl
+
+# caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# tooling
+.venv/
+.uv/
 
 # local secrets
 .polymarket.env
